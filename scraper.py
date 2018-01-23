@@ -1,10 +1,9 @@
-import io
+import errno
 import os
 import urllib
-import errno
 import basc_py4chan
-from google.cloud import vision
-from google.cloud.vision import types
+from image import image_processor
+from vision import google_cloud_vision
 
 # setup directory to store files if necessary and make it my cwd
 cwd = os.getcwd()
@@ -15,9 +14,6 @@ if os.path.isdir(tmp_dir):
 else:
     os.mkdir(tmp_dir, 775)
     os.chdir(tmp_dir)
-
-# instantiate the google vision client
-vision_client = vision.ImageAnnotatorClient()
 
 # get all threads from specified 4chan board
 board = basc_py4chan.Board("g", https=False, session=None)
@@ -49,32 +45,26 @@ def get_files_from_threads(max_files):
     return
 
 
-# TODO this is probably better refactored to take the fully qualified filename as an argument
-# also wouldn't hurt to sanitize input of unsupported file types
-# for each image call the google image processing api to gather facts
-def call_vision_api():
+def get_images_from_threads(max_images):
+    i = 1
+    for thread in threads:
+        if i == max_images:
+            return
+        else:
+            i = i + 1
 
-    for file in os.listdir(tmp_dir):
+        for file_object in thread.file_objects():
 
-        # The name of the image file to annotate
-        file_name = os.path.join(tmp_dir, file)
-
-        # Loads the image into memory
-        with io.open(file_name, 'rb') as image_file:
-            content = image_file.read()
-
-        image = types.Image(content=content)
-
-        # Performs label detection on the image file
-        response = vision_client.label_detection(image=image)
-        labels = response.label_annotations
-
-        # persist to datastore
-        # TODO find a cloud datastore and put this in it instead of printing
-        print('Filename:', file_name)
-        print('Labels:')
-        for label in labels:
-            print(label.description)
+            try:
+                content = image_processor.get_image_from_url_as_bytes(file_object.file_url)
+                google_cloud_vision.get_labels(content)
+            except ConnectionResetError as e:
+                if e.errno != errno.ECONNRESET:
+                    raise  # re-raise the last exception because it wasn't a conn reset
+                else:
+                    print("ConnectionResetError: skipping file", file_object.filename_original)
+                    return
+    return
 
 
 def cleanup():
@@ -83,6 +73,8 @@ def cleanup():
         os.remove(file_name_rm)
 
 
-get_files_from_threads(5)
-call_vision_api()
+#get_files_from_threads(1)
+#content = image_processor.get_image_from_url_as_bytes('http://xiostorage.com/wp-content/uploads/2015/10/test.png')
+#google_cloud_vision.get_labels(content)
+get_images_from_threads(4)
 cleanup()
